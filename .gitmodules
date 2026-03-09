@@ -1,0 +1,3 @@
+[submodule "vendor/Isaac-GR00T"]
+	path = vendor/Isaac-GR00T
+	url = https://github.com/NVIDIA/Isaac-GR00T.git
