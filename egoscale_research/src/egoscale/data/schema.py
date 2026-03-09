@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 import torch
 
-from egoscale.config import StageRecipe
+from egoscale.config import DataConfig, StageRecipe, default_stage_sample_rules
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,7 @@ class EgoScaleSample:
         return replace(self, **changes)
 
 
-def validate_stage_sample(stage_recipe: StageRecipe, sample: EgoScaleSample, stage3_allow_aligned_human: bool) -> None:
+def validate_stage_sample(stage_recipe: StageRecipe, sample: EgoScaleSample, data_config: DataConfig) -> None:
     if sample.action_dim != sample.actions.shape[-1]:
         raise ValueError("action_dim must match actions.shape[-1]")
     if sample.state_dim != sample.raw_state.shape[-1]:
@@ -97,41 +97,34 @@ def validate_stage_sample(stage_recipe: StageRecipe, sample: EgoScaleSample, sta
         raise ValueError("action_timestamps must match action_horizon")
     if sample.obs_timestamps[-1] != sample.action_timestamps[0]:
         raise ValueError("obs_timestamps[-1] must align with action_timestamps[0]")
+    stage_rules = data_config.stage_sample_rules or default_stage_sample_rules()
+    rules = stage_rules.get(stage_recipe)
+    if not rules:
+        raise ValueError(f"No stage_sample_rules configured for {stage_recipe}")
+    if not any(_matches_stage_rule(sample, rule) for rule in rules):
+        raise ValueError(f"Sample is not allowed by stage_sample_rules for {stage_recipe}")
 
-    if stage_recipe == "stage1":
-        allowed_views = {
-            ("head",),
-            ("head", "left_wrist"),
-            ("head", "right_wrist"),
-            ("head", "left_wrist", "right_wrist"),
-        }
-        if sample.embodiment_id != "sharpa" or sample.data_source != "human_retargeted" or sample.has_proprio:
-            raise ValueError("Stage I only allows sharpa human-retargeted samples without proprio")
-        if sample.state_semantics_name != "sharpa_proprio_v1" or sample.action_semantics_name != "sharpa_wristdelta_hand22_v1":
-            raise ValueError("Stage I semantics must match sharpa defaults")
-        if sample.action_dim != 28:
-            raise ValueError("Stage I action_dim must be 28")
-        if tuple(sample.camera_views) not in allowed_views:
-            raise ValueError("Stage I camera views must follow the canonical subsets")
-    elif stage_recipe == "stage2":
-        allowed = {
-            ("sharpa", "human_retargeted", False),
-            ("sharpa", "robot_native", True),
-            ("g1", "robot_native", True),
-        }
-        if (sample.embodiment_id, sample.data_source, sample.has_proprio) not in allowed:
-            raise ValueError("Stage II sample shape is not allowed by spec")
-    elif stage_recipe == "stage3":
-        if sample.data_source == "human_retargeted":
-            if not stage3_allow_aligned_human:
-                raise ValueError("Stage III aligned human is disabled")
-            if sample.embodiment_id != "sharpa" or sample.has_proprio:
-                raise ValueError("Stage III aligned human must be sharpa without proprio")
-        else:
-            if sample.data_source != "robot_native" or not sample.has_proprio:
-                raise ValueError("Stage III robot buckets must be robot_native with proprio")
-    else:
-        raise ValueError("Unknown stage_recipe")
+
+def _matches_stage_rule(sample: EgoScaleSample, rule: Mapping[str, Any]) -> bool:
+    if "embodiment_id" in rule and sample.embodiment_id != rule["embodiment_id"]:
+        return False
+    if "data_source" in rule and sample.data_source != rule["data_source"]:
+        return False
+    if "has_proprio" in rule and sample.has_proprio != bool(rule["has_proprio"]):
+        return False
+    if "state_semantics_names" in rule and sample.state_semantics_name not in set(rule["state_semantics_names"]):
+        return False
+    if "action_semantics_names" in rule and sample.action_semantics_name not in set(rule["action_semantics_names"]):
+        return False
+    if "action_dim" in rule and sample.action_dim != int(rule["action_dim"]):
+        return False
+    if "state_dim" in rule and sample.state_dim != int(rule["state_dim"]):
+        return False
+    if "allowed_camera_view_sets" in rule:
+        allowed = {tuple(view_set) for view_set in rule["allowed_camera_view_sets"]}
+        if tuple(sample.camera_views) not in allowed:
+            return False
+    return True
 
 
 def _to_tensor(value: Any) -> torch.Tensor:

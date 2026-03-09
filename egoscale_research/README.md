@@ -59,10 +59,69 @@ PYTHONPATH=src python scripts/train_stage2.py --config configs/stage2.yaml --dat
 PYTHONPATH=src python scripts/train_stage3.py --config configs/stage3.yaml --dataset /path/to/stage3.jsonl --checkpoint /path/to/stage3.pt
 ```
 
+Stage I can optionally run held-out validation during training:
+
+```bash
+PYTHONPATH=src python scripts/train_stage1.py \
+  --config configs/stage1.yaml \
+  --dataset /path/to/stage1_train.jsonl \
+  --val-dataset /path/to/stage1_val.jsonl \
+  --checkpoint /path/to/stage1.pt
+```
+
+Relevant config keys live under `training`:
+
+- `grad_accum_steps`
+- `eval_interval`
+- `log_interval`
+- `max_val_batches`
+- `wandb_enabled`
+- `wandb_project`
+- `wandb_entity`
+- `wandb_run_name`
+- `wandb_mode`
+
+Stage-specific dataset constraints are configurable in each YAML under `data.stage_sample_rules`.
+This is the layer that decides which combinations of `embodiment_id`, `data_source`, `has_proprio`,
+semantics names, action dimensions, and camera-view sets are legal for Stage I / II / III.
+You can switch a stage from the default Sharpa contract to an SO101 or EgoDex-specific contract
+without editing validator code in `src/egoscale/data/schema.py`.
+
+For a real-backbone smoke test with Qwen2.5-VL, use:
+
+```bash
+OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false \
+PYTHONPATH=src python scripts/train_stage1.py \
+  --config configs/stage1_qwen_smoke.yaml \
+  --dataset /path/to/stage1_manifest.jsonl \
+  --checkpoint /path/to/stage1_qwen_smoke.pt
+```
+
+Single-node multi-GPU training uses `torchrun`. The configured `training.batch_size` is the
+per-process micro-batch, and the effective global batch is:
+`world_size * training.batch_size * training.grad_accum_steps`.
+
+```bash
+OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false \
+torchrun --nproc_per_node=4 scripts/train_stage1.py \
+  --config configs/stage1.yaml \
+  --dataset /path/to/stage1_train.jsonl \
+  --val-dataset /path/to/stage1_val.jsonl \
+  --checkpoint /path/to/stage1_ddp.pt
+```
+
 Batch inspection:
 
 ```bash
 PYTHONPATH=src python scripts/inspect_batch.py --config configs/stage2.yaml --dataset /path/to/data.jsonl
+```
+
+EgoDex Stage I dataset conversion into the repository's `meta/data/videos` layout:
+
+```bash
+PYTHONPATH=src python scripts/convert_egodex_stage1.py \
+  --input-root /path/to/egodex/train \
+  --output-root /path/to/output/egodex_stage1_v1
 ```
 
 ## Lightweight Smoke Mode

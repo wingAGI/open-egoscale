@@ -9,6 +9,8 @@ model:
   num_timestep_buckets: 1000
   num_attention_heads: 8
   num_dit_layers: 4
+  qwen_min_pixels: 200704
+  qwen_max_pixels: 401408
 data:
   canonical_view_order: [head, left_wrist, right_wrist]
   obs_horizon: 2
@@ -35,16 +37,16 @@ data:
           - [head, left_wrist, right_wrist]
 training:
   stage_recipe: stage1
-  batch_size: 2
+  batch_size: 1
   grad_accum_steps: 1
   learning_rate: 0.0003
-  max_steps: 100
+  max_steps: 1
   eval_interval: 0
   log_interval: 1
   max_val_batches: 0
   device: cuda
   use_mid_training: true
-  lightweight_vlm_freeze: false
+  lightweight_vlm_freeze: true
   wandb_enabled: false
   wandb_project: ""
   wandb_entity: ""

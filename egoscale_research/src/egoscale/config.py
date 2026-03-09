@@ -101,14 +101,19 @@ class DataConfig:
         default_factory=lambda: ["sharpa_proprio_v1", "g1_proprio_v1"]
     )
     stage3_allow_aligned_human: bool = False
+    stage_sample_rules: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
 
 @dataclass
 class TrainingConfig:
     stage_recipe: StageRecipe = "stage1"
     batch_size: int = 2
+    grad_accum_steps: int = 1
     learning_rate: float = 3e-4
     max_steps: int = 1000
+    eval_interval: int = 0
+    log_interval: int = 1
+    max_val_batches: int = 0
     weight_decay: float = 0.01
     device: str = "cuda"
     seed: int = 7
@@ -116,6 +121,11 @@ class TrainingConfig:
     state_adapter_mode: str = "placeholder_or_proprio"
     use_mid_training: bool = True
     lightweight_vlm_freeze: bool = False
+    wandb_enabled: bool = False
+    wandb_project: str = ""
+    wandb_entity: str = ""
+    wandb_run_name: str = ""
+    wandb_mode: str = "online"
 
 
 @dataclass
@@ -238,3 +248,47 @@ def _default_action_semantics() -> List[Dict[str, Any]]:
             "normalization": {"scheme": "meanstd", "stats_id": "g1_action_train_v1"},
         },
     ]
+
+
+def default_stage_sample_rules() -> Dict[str, List[Dict[str, Any]]]:
+    return {
+        "stage1": [
+            {
+                "embodiment_id": "sharpa",
+                "data_source": "human_retargeted",
+                "has_proprio": False,
+                "state_semantics_names": ["sharpa_proprio_v1"],
+                "action_semantics_names": ["sharpa_wristdelta_hand22_v1"],
+                "action_dim": 28,
+                "allowed_camera_view_sets": [
+                    ["head"],
+                    ["head", "left_wrist"],
+                    ["head", "right_wrist"],
+                    ["head", "left_wrist", "right_wrist"],
+                ],
+            }
+        ],
+        "stage2": [
+            {
+                "embodiment_id": "sharpa",
+                "data_source": "human_retargeted",
+                "has_proprio": False,
+            },
+            {
+                "embodiment_id": "sharpa",
+                "data_source": "robot_native",
+                "has_proprio": True,
+            },
+            {
+                "embodiment_id": "g1",
+                "data_source": "robot_native",
+                "has_proprio": True,
+            },
+        ],
+        "stage3": [
+            {
+                "data_source": "robot_native",
+                "has_proprio": True,
+            }
+        ],
+    }

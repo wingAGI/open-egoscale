@@ -115,6 +115,10 @@ class Qwen25VLBackbone(BaseVLMBackbone):
         backbone_name = os.getenv("EGOSCALE_VLM_BACKBONE_NAME", config.vlm_backbone_name)
         config.vlm_backbone_name = backbone_name
         load_kwargs = {"local_files_only": True} if Path(backbone_name).exists() else {}
+        print(
+            f"[Qwen25VLBackbone] loading processor from {backbone_name} "
+            f"(local_files_only={load_kwargs.get('local_files_only', False)})"
+        )
         self.processor = AutoProcessor.from_pretrained(
             backbone_name,
             min_pixels=config.qwen_min_pixels,
@@ -122,7 +126,11 @@ class Qwen25VLBackbone(BaseVLMBackbone):
             **load_kwargs,
         )
         model_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-        self.model = Qwen2_5_VLModel.from_pretrained(backbone_name, torch_dtype=model_dtype, **load_kwargs)
+        print(f"[Qwen25VLBackbone] loading model weights with dtype={model_dtype}")
+        model_load_kwargs = dict(load_kwargs)
+        model_load_kwargs["low_cpu_mem_usage"] = True
+        self.model = Qwen2_5_VLModel.from_pretrained(backbone_name, torch_dtype=model_dtype, **model_load_kwargs)
+        print("[Qwen25VLBackbone] model loaded")
         hidden_size = getattr(self.model.config, "hidden_size", None)
         if hidden_size is not None and config.vlm_token_dim != hidden_size:
             warnings.warn(

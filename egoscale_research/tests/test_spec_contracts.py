@@ -111,6 +111,52 @@ def make_sample(embodiment_id: str, data_source: str, has_proprio: bool) -> EgoS
 
 
 class SpecContractTests(unittest.TestCase):
+    def test_stage_rules_can_be_overridden_from_config(self) -> None:
+        config = build_config()
+        config.data.stage_sample_rules = {
+            "stage1": [
+                {
+                    "embodiment_id": "sharpa",
+                    "data_source": "human_retargeted",
+                    "has_proprio": False,
+                    "state_semantics_names": ["custom_human_state_v1"],
+                    "action_semantics_names": ["custom_human_action_v1"],
+                    "action_dim": 12,
+                    "allowed_camera_view_sets": [["head"]],
+                }
+            ]
+        }
+        config.data.allowed_state_semantics_names = ["custom_human_state_v1"]
+        config.data.allowed_action_semantics_names = ["custom_human_action_v1"]
+        config.state_semantics = {
+            "custom_human_state_v1": config.state_semantics["sharpa_proprio_v1"].__class__(
+                name="custom_human_state_v1",
+                embodiment_id="sharpa",
+                state_dim=6,
+                field_order=["a"] * 6,
+                units=["u"] * 6,
+                normalization=config.state_semantics["sharpa_proprio_v1"].normalization,
+            )
+        }
+        config.action_semantics = {
+            "custom_human_action_v1": config.action_semantics["sharpa_wristdelta_hand22_v1"].__class__(
+                name="custom_human_action_v1",
+                embodiment_id="sharpa",
+                action_dim=12,
+                control_frequency_hz=10,
+                normalization=config.action_semantics["sharpa_wristdelta_hand22_v1"].normalization,
+            )
+        }
+        sample = make_sample("sharpa", "human_retargeted", False).replace(
+            state_semantics_name="custom_human_state_v1",
+            action_semantics_name="custom_human_action_v1",
+            action_dim=12,
+            actions=torch.randn(4, 12),
+            camera_views=["head"],
+        )
+        dataset = EgoScaleDataset([sample], data_config=config.data, stage_recipe="stage1")
+        self.assertEqual(len(dataset), 1)
+
     def test_placeholder_state_and_missing_views_contract(self) -> None:
         config = build_config()
         transforms = EgoScaleTransforms(config.data, config.state_semantics, config.action_semantics)
@@ -139,6 +185,27 @@ class SpecContractTests(unittest.TestCase):
         for batch_indices in sampler:
             keys = {dataset.samples[index].bucket_key.as_string() for index in batch_indices}
             self.assertEqual(len(keys), 1)
+
+    def test_bucket_sampler_can_shard_batches_across_ranks(self) -> None:
+        config = build_config()
+        transforms = EgoScaleTransforms(config.data, config.state_semantics, config.action_semantics)
+        dataset = EgoScaleDataset(
+            [
+                make_sample("sharpa", "human_retargeted", False),
+                make_sample("sharpa", "human_retargeted", False),
+                make_sample("g1", "robot_native", True),
+                make_sample("g1", "robot_native", True),
+            ],
+            data_config=config.data,
+            stage_recipe="stage2",
+            transform=transforms,
+        )
+        sampler_rank0 = BucketedBatchSampler(dataset, batch_size=1, seed=0, num_replicas=2, rank=0)
+        sampler_rank1 = BucketedBatchSampler(dataset, batch_size=1, seed=0, num_replicas=2, rank=1)
+        rank0_indices = {batch[0] for batch in sampler_rank0}
+        rank1_indices = {batch[0] for batch in sampler_rank1}
+        self.assertFalse(rank0_indices & rank1_indices)
+        self.assertEqual(rank0_indices | rank1_indices, set(range(len(dataset))))
 
     def test_policy_forward_matches_tensor_contract(self) -> None:
         config = build_config()
@@ -204,6 +271,70 @@ class SpecContractTests(unittest.TestCase):
             self.assertFalse(adapter_trainable, stage_recipe)
             self.assertFalse(language_trainable, stage_recipe)
             self.assertTrue(action_head_trainable, stage_recipe)
+
+    def test_stage1_fit_records_train_and_val_metrics(self) -> None:
+        config = build_config()
+        config.training.stage_recipe = "stage1"
+        config.training.max_steps = 2
+        config.training.batch_size = 1
+        config.training.log_interval = 1
+        config.training.eval_interval = 1
+        config.training.max_val_batches = 1
+        trainer = Stage1Trainer(config)
+        transforms = EgoScaleTransforms(config.data, config.state_semantics, config.action_semantics)
+        train_dataset = EgoScaleDataset(
+            [make_sample("sharpa", "human_retargeted", False)],
+            data_config=config.data,
+            stage_recipe="stage1",
+            transform=transforms,
+        )
+        val_dataset = EgoScaleDataset(
+            [make_sample("sharpa", "human_retargeted", False)],
+            data_config=config.data,
+            stage_recipe="stage1",
+            transform=transforms,
+        )
+        metrics = trainer.fit(train_dataset, val_dataset=val_dataset)
+        self.assertIn("last_train_loss", metrics)
+        self.assertIn("last_val_loss", metrics)
+        self.assertEqual(len(trainer.history.train), 2)
+        self.assertEqual(len(trainer.history.val), 2)
+
+    def test_stage1_fit_uses_gradient_accumulation(self) -> None:
+        config = build_config()
+        config.training.stage_recipe = "stage1"
+        config.training.max_steps = 2
+        config.training.batch_size = 1
+        config.training.grad_accum_steps = 2
+        trainer = Stage1Trainer(config)
+        transforms = EgoScaleTransforms(config.data, config.state_semantics, config.action_semantics)
+        train_dataset = EgoScaleDataset(
+            [make_sample("sharpa", "human_retargeted", False)],
+            data_config=config.data,
+            stage_recipe="stage1",
+            transform=transforms,
+        )
+
+        forward_calls = {"count": 0}
+        optimizer_steps = {"count": 0}
+        original_forward_batch = trainer.forward_batch
+        original_optimizer_step = trainer.optimizer.step
+
+        def counted_forward_batch(batch):
+            forward_calls["count"] += 1
+            return original_forward_batch(batch)
+
+        def counted_optimizer_step(*args, **kwargs):
+            optimizer_steps["count"] += 1
+            return original_optimizer_step(*args, **kwargs)
+
+        trainer.forward_batch = counted_forward_batch
+        trainer.optimizer.step = counted_optimizer_step
+
+        trainer.fit(train_dataset)
+
+        self.assertEqual(forward_calls["count"], 4)
+        self.assertEqual(optimizer_steps["count"], 2)
 
     def test_qwen_context_mask_respects_image_mask(self) -> None:
         backbone = object.__new__(Qwen25VLBackbone)
