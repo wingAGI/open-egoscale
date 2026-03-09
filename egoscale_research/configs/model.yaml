@@ -1,0 +1,11 @@
+model:
+  backbone_impl: qwen2_5_vl
+  vlm_backbone_name: Qwen/Qwen2.5-VL-3B-Instruct
+  vlm_token_dim: 2048
+  vlm_max_views: 3
+  obs_horizon: 2
+  action_horizon: 8
+  num_inference_timesteps: 8
+  num_timestep_buckets: 1000
+  num_attention_heads: 8
+  num_dit_layers: 4

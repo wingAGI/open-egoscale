@@ -1,0 +1,30 @@
+model:
+  backbone_impl: qwen2_5_vl
+  vlm_backbone_name: Qwen/Qwen2.5-VL-3B-Instruct
+  vlm_token_dim: 2048
+  vlm_max_views: 3
+  obs_horizon: 2
+  action_horizon: 8
+  num_inference_timesteps: 8
+  num_timestep_buckets: 1000
+  num_attention_heads: 8
+  num_dit_layers: 4
+data:
+  canonical_view_order: [head, left_wrist, right_wrist]
+  obs_horizon: 2
+  action_horizon: 8
+  sample_stride: 1
+  bucket_sampling_policy: proportional_to_active_samples
+  embodiment_buckets: [sharpa]
+  data_source_buckets: [human_retargeted]
+  allowed_action_semantics_names: [sharpa_wristdelta_hand22_v1]
+  allowed_state_semantics_names: [sharpa_proprio_v1]
+  stage3_allow_aligned_human: false
+training:
+  stage_recipe: stage1
+  batch_size: 2
+  learning_rate: 0.0003
+  max_steps: 100
+  device: cuda
+  use_mid_training: true
+  lightweight_vlm_freeze: false

@@ -1,0 +1,15 @@
+data:
+  canonical_view_order: [head, left_wrist, right_wrist]
+  obs_horizon: 2
+  action_horizon: 8
+  sample_stride: 1
+  bucket_sampling_policy: proportional_to_active_samples
+  embodiment_buckets: [sharpa, g1]
+  data_source_buckets: [human_retargeted, robot_native]
+  allowed_action_semantics_names:
+    - sharpa_wristdelta_hand22_v1
+    - g1_lowdim_native_v1
+  allowed_state_semantics_names:
+    - sharpa_proprio_v1
+    - g1_proprio_v1
+  stage3_allow_aligned_human: false
