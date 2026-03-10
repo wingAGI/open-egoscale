@@ -1,0 +1,40 @@
+.DS_Store
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Training outputs
+wandb/
+outputs/
+runs/
+checkpoints/
+logs/
+
+# Local datasets and artifacts
+data/
+remote_data/
+artifacts/
+cache/
+tmp/
+
+# Model weights and checkpoints
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+
+# Databases and local state
+*.db
+*.sqlite
+*.sqlite3

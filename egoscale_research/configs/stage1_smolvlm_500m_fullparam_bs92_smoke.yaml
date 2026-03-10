@@ -1,0 +1,56 @@
+model:
+  backbone_impl: smolvlm
+  vlm_backbone_name: HuggingFaceTB/SmolVLM2-500M-Video-Instruct
+  vlm_token_dim: 2048
+  vlm_max_views: 3
+  obs_horizon: 2
+  action_horizon: 8
+  num_inference_timesteps: 8
+  num_timestep_buckets: 1000
+  num_attention_heads: 8
+  num_dit_layers: 4
+  smolvlm_do_resize: true
+  smolvlm_resize_longest_edge: 384
+  smolvlm_do_image_splitting: false
+  smolvlm_max_image_size_longest_edge: 384
+data:
+  canonical_view_order: [head, left_wrist, right_wrist]
+  obs_horizon: 2
+  action_horizon: 8
+  sample_stride: 1
+  bucket_sampling_policy: proportional_to_active_samples
+  embodiment_buckets: [sharpa]
+  data_source_buckets: [human_retargeted]
+  allowed_action_semantics_names: [sharpa_wristdelta_hand22_v1]
+  allowed_state_semantics_names: [sharpa_proprio_v1]
+  stage3_allow_aligned_human: false
+  stage_sample_rules:
+    stage1:
+      - embodiment_id: sharpa
+        data_source: human_retargeted
+        has_proprio: false
+        state_semantics_names: [sharpa_proprio_v1]
+        action_semantics_names: [sharpa_wristdelta_hand22_v1]
+        action_dim: 28
+        allowed_camera_view_sets:
+          - [head]
+          - [head, left_wrist]
+          - [head, right_wrist]
+          - [head, left_wrist, right_wrist]
+training:
+  stage_recipe: stage1
+  batch_size: 92
+  grad_accum_steps: 1
+  learning_rate: 0.0003
+  max_steps: 1
+  eval_interval: 0
+  log_interval: 1
+  max_val_batches: 0
+  device: cuda
+  use_mid_training: true
+  lightweight_vlm_freeze: false
+  wandb_enabled: false
+  wandb_project: ""
+  wandb_entity: ""
+  wandb_run_name: ""
+  wandb_mode: online

@@ -292,6 +292,7 @@ class SmolVLMBackbone(BaseVLMBackbone):
         model_load_kwargs["low_cpu_mem_usage"] = True
         self.model = SmolVLMModel.from_pretrained(backbone_name, torch_dtype=model_dtype, **model_load_kwargs)
         print("[SmolVLMBackbone] model loaded")
+        self._sync_processor_image_seq_len()
         text_config = getattr(self.model.config, "text_config", None)
         hidden_size = getattr(text_config, "hidden_size", None) or getattr(self.model.config, "hidden_size", None)
         if hidden_size is not None and config.vlm_token_dim != hidden_size:
@@ -316,6 +317,25 @@ class SmolVLMBackbone(BaseVLMBackbone):
     def language_backbone_group(self) -> nn.Module:
         return self.language_backbone
 
+    def _sync_processor_image_seq_len(self) -> None:
+        image_processor = getattr(self.processor, "image_processor", None)
+        if image_processor is None or not getattr(image_processor, "do_resize", False):
+            return
+        size = getattr(image_processor, "size", None)
+        if not isinstance(size, dict):
+            return
+        longest_edge = size.get("longest_edge")
+        if not isinstance(longest_edge, int) or longest_edge <= 0:
+            return
+        vision_config = getattr(self.model.config, "vision_config", None)
+        patch_size = int(getattr(vision_config, "patch_size", 0) or 0)
+        scale_factor = int(getattr(self.model.config, "scale_factor", 1) or 1)
+        if patch_size <= 0 or scale_factor <= 0:
+            return
+        image_seq_len = ((longest_edge // patch_size) ** 2) // (scale_factor**2)
+        if image_seq_len > 0:
+            self.processor.image_seq_len = int(image_seq_len)
+
     def forward(
         self,
         images: torch.Tensor,
@@ -325,11 +345,13 @@ class SmolVLMBackbone(BaseVLMBackbone):
         dtype: Optional[torch.dtype] = None,
     ) -> VLMBackboneOutput:
         device = device or next(self.model.parameters()).device
-        prompt_text, prompt_images = self._build_prompts(images=images, image_mask=image_mask, text=text)
-        model_inputs = self.processor(
-            images=prompt_images,
-            text=prompt_text,
+        messages = self._build_messages(images=images, image_mask=image_mask, text=text)
+        model_inputs = self.processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=False,
             return_tensors="pt",
+            return_dict=True,
             padding=True,
         )
         model_dtype = next(self.model.parameters()).dtype
@@ -350,30 +372,25 @@ class SmolVLMBackbone(BaseVLMBackbone):
         context_mask = model_inputs["attention_mask"].to(dtype=torch.bool)
         return VLMBackboneOutput(context_tokens=context_tokens, context_mask=context_mask, aux=model_inputs)
 
-    def _build_prompts(
+    def _build_messages(
         self,
         images: torch.Tensor,
         image_mask: torch.Tensor,
         text: List[str],
-    ) -> tuple[List[str], List[List[Image.Image]]]:
+    ) -> List[List[Dict[str, object]]]:
         batch_size, num_views, t_visual = images.shape[:3]
-        prompt_text = []
-        prompt_images: List[List[Image.Image]] = []
+        messages: List[List[Dict[str, object]]] = []
         for batch_index in range(batch_size):
-            sample_images: List[Image.Image] = []
+            content: List[Dict[str, object]] = []
             for slot_index in range(num_views * t_visual):
                 view_index = slot_index // t_visual
                 time_index = slot_index % t_visual
                 if not bool(image_mask[batch_index, view_index, time_index]):
                     continue
-                sample_images.append(_tensor_to_pil(images[batch_index, view_index, time_index]))
-            prefix = " ".join("<image>" for _ in sample_images)
-            if prefix:
-                prompt_text.append(f"{prefix}\n{text[batch_index]}")
-            else:
-                prompt_text.append(text[batch_index])
-            prompt_images.append(sample_images)
-        return prompt_text, prompt_images
+                content.append({"type": "image", "image": _tensor_to_pil(images[batch_index, view_index, time_index])})
+            content.append({"type": "text", "text": text[batch_index]})
+            messages.append([{"role": "user", "content": content}])
+        return messages
 
 
 def build_vlm_backbone(config: ModelConfig) -> BaseVLMBackbone:
