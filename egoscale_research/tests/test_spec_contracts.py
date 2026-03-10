@@ -157,6 +157,24 @@ class SpecContractTests(unittest.TestCase):
         dataset = EgoScaleDataset([sample], data_config=config.data, stage_recipe="stage1")
         self.assertEqual(len(dataset), 1)
 
+    def test_smolvlm_model_config_fields_parse(self) -> None:
+        config = ExperimentConfig.from_mapping(
+            {
+                "model": {
+                    "backbone_impl": "smolvlm",
+                    "vlm_backbone_name": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+                    "smolvlm_do_resize": True,
+                    "smolvlm_resize_longest_edge": 384,
+                    "smolvlm_do_image_splitting": False,
+                    "smolvlm_max_image_size_longest_edge": 384,
+                }
+            }
+        )
+        self.assertEqual(config.model.backbone_impl, "smolvlm")
+        self.assertEqual(config.model.vlm_backbone_name, "HuggingFaceTB/SmolVLM2-500M-Video-Instruct")
+        self.assertEqual(config.model.smolvlm_resize_longest_edge, 384)
+        self.assertFalse(config.model.smolvlm_do_image_splitting)
+
     def test_placeholder_state_and_missing_views_contract(self) -> None:
         config = build_config()
         transforms = EgoScaleTransforms(config.data, config.state_semantics, config.action_semantics)

@@ -25,7 +25,7 @@ From `egoscale_research/`:
 pip install -e .
 ```
 
-The Qwen2.5-VL path requires a `transformers` build with `Qwen2_5_VLModel` support.
+The Qwen2.5-VL and SmolVLM2 paths require a `transformers` build with the relevant model classes.
 
 ## Backbone Configuration
 
@@ -34,6 +34,25 @@ The default stage configs use:
 - `model.backbone_impl: qwen2_5_vl`
 - `model.vlm_backbone_name: Qwen/Qwen2.5-VL-3B-Instruct`
 - `model.vlm_token_dim: 2048`
+
+The repository also supports:
+
+- `model.backbone_impl: smolvlm`
+- `model.vlm_backbone_name: HuggingFaceTB/SmolVLM2-500M-Video-Instruct`
+- `model.vlm_backbone_name: HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+
+For SmolVLM2, the code path uses:
+
+- `vision_model` as the visual encoder freeze group
+- `connector` as the multimodal adapter freeze group
+- `text_model` as the language backbone freeze group
+
+SmolVLM2-specific resizing knobs live under `model`:
+
+- `smolvlm_do_resize`
+- `smolvlm_resize_longest_edge`
+- `smolvlm_do_image_splitting`
+- `smolvlm_max_image_size_longest_edge`
 
 If the weights already exist on disk, override the backbone path through:
 
@@ -95,6 +114,16 @@ PYTHONPATH=src python scripts/train_stage1.py \
   --config configs/stage1_qwen_smoke.yaml \
   --dataset /path/to/stage1_manifest.jsonl \
   --checkpoint /path/to/stage1_qwen_smoke.pt
+```
+
+For SmolVLM2 smoke tests, use:
+
+```bash
+OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false \
+PYTHONPATH=src python scripts/train_stage1.py \
+  --config configs/stage1_smolvlm_500m_smoke.yaml \
+  --dataset /path/to/stage1_manifest.jsonl \
+  --checkpoint /path/to/stage1_smolvlm_500m_smoke.pt
 ```
 
 Single-node multi-GPU training uses `torchrun`. The configured `training.batch_size` is the

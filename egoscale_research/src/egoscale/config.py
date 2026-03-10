@@ -62,7 +62,7 @@ class TrainableModuleGroups:
 @dataclass
 class ModelConfig:
     vlm_backbone_name: str = "Qwen/Qwen2.5-VL-3B-Instruct"
-    backbone_impl: Literal["dummy", "qwen2_5_vl"] = "dummy"
+    backbone_impl: Literal["dummy", "qwen2_5_vl", "smolvlm"] = "dummy"
     vlm_token_dim: int = 2048
     vlm_max_views: int = 3
     obs_horizon: int = 2
@@ -76,6 +76,10 @@ class ModelConfig:
     dummy_text_tokens: int = 8
     qwen_min_pixels: int = 256 * 28 * 28
     qwen_max_pixels: int = 1024 * 28 * 28
+    smolvlm_do_resize: bool = True
+    smolvlm_resize_longest_edge: int = 512
+    smolvlm_do_image_splitting: bool = False
+    smolvlm_max_image_size_longest_edge: int = 364
     vision_encoder_attr: str = "visual"
     multimodal_adapter_attrs: List[str] = field(default_factory=lambda: ["visual.merger"])
     language_backbone_attr: str = "language_model"

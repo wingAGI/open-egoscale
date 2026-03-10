@@ -261,11 +261,128 @@ class Qwen25VLBackbone(BaseVLMBackbone):
         return context_mask
 
 
+class SmolVLMBackbone(BaseVLMBackbone):
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__(config)
+        try:
+            from transformers import AutoProcessor, SmolVLMModel
+        except ImportError as exc:
+            raise ImportError("transformers with SmolVLM support is required for smolvlm backbone") from exc
+
+        backbone_name = os.getenv("EGOSCALE_VLM_BACKBONE_NAME", config.vlm_backbone_name)
+        config.vlm_backbone_name = backbone_name
+        load_kwargs = {"local_files_only": True} if Path(backbone_name).exists() else {}
+        print(
+            f"[SmolVLMBackbone] loading processor from {backbone_name} "
+            f"(local_files_only={load_kwargs.get('local_files_only', False)})"
+        )
+        self.processor = AutoProcessor.from_pretrained(backbone_name, **load_kwargs)
+        image_processor = getattr(self.processor, "image_processor", None)
+        if image_processor is not None:
+            image_processor.do_resize = config.smolvlm_do_resize
+            if config.smolvlm_do_resize:
+                image_processor.size = {"longest_edge": config.smolvlm_resize_longest_edge}
+            if hasattr(image_processor, "do_image_splitting"):
+                image_processor.do_image_splitting = config.smolvlm_do_image_splitting
+            if hasattr(image_processor, "max_image_size"):
+                image_processor.max_image_size = {"longest_edge": config.smolvlm_max_image_size_longest_edge}
+        model_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+        print(f"[SmolVLMBackbone] loading model weights with dtype={model_dtype}")
+        model_load_kwargs = dict(load_kwargs)
+        model_load_kwargs["low_cpu_mem_usage"] = True
+        self.model = SmolVLMModel.from_pretrained(backbone_name, torch_dtype=model_dtype, **model_load_kwargs)
+        print("[SmolVLMBackbone] model loaded")
+        text_config = getattr(self.model.config, "text_config", None)
+        hidden_size = getattr(text_config, "hidden_size", None) or getattr(self.model.config, "hidden_size", None)
+        if hidden_size is not None and config.vlm_token_dim != hidden_size:
+            warnings.warn(
+                f"Overriding vlm_token_dim from {config.vlm_token_dim} to SmolVLM hidden_size {hidden_size}.",
+                stacklevel=2,
+            )
+            config.vlm_token_dim = int(hidden_size)
+        self.visual_encoder = self.model.vision_model
+        self.multimodal_adapter = self.model.connector
+        self.language_backbone = self.model.text_model
+
+    @property
+    def visual_encoder_group(self) -> nn.Module:
+        return self.visual_encoder
+
+    @property
+    def multimodal_adapter_group(self) -> nn.Module:
+        return self.multimodal_adapter
+
+    @property
+    def language_backbone_group(self) -> nn.Module:
+        return self.language_backbone
+
+    def forward(
+        self,
+        images: torch.Tensor,
+        image_mask: torch.Tensor,
+        text: List[str],
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ) -> VLMBackboneOutput:
+        device = device or next(self.model.parameters()).device
+        prompt_text, prompt_images = self._build_prompts(images=images, image_mask=image_mask, text=text)
+        model_inputs = self.processor(
+            images=prompt_images,
+            text=prompt_text,
+            return_tensors="pt",
+            padding=True,
+        )
+        model_dtype = next(self.model.parameters()).dtype
+        normalized_inputs: Dict[str, torch.Tensor | object] = {}
+        for key, value in model_inputs.items():
+            if not torch.is_tensor(value):
+                normalized_inputs[key] = value
+                continue
+            if value.is_floating_point():
+                normalized_inputs[key] = value.to(device=device, dtype=model_dtype)
+            else:
+                normalized_inputs[key] = value.to(device=device)
+        model_inputs = normalized_inputs
+        outputs = self.model(**model_inputs, output_hidden_states=True, return_dict=True)
+        context_tokens = outputs.last_hidden_state
+        if dtype is not None:
+            context_tokens = context_tokens.to(dtype=dtype)
+        context_mask = model_inputs["attention_mask"].to(dtype=torch.bool)
+        return VLMBackboneOutput(context_tokens=context_tokens, context_mask=context_mask, aux=model_inputs)
+
+    def _build_prompts(
+        self,
+        images: torch.Tensor,
+        image_mask: torch.Tensor,
+        text: List[str],
+    ) -> tuple[List[str], List[List[Image.Image]]]:
+        batch_size, num_views, t_visual = images.shape[:3]
+        prompt_text = []
+        prompt_images: List[List[Image.Image]] = []
+        for batch_index in range(batch_size):
+            sample_images: List[Image.Image] = []
+            for slot_index in range(num_views * t_visual):
+                view_index = slot_index // t_visual
+                time_index = slot_index % t_visual
+                if not bool(image_mask[batch_index, view_index, time_index]):
+                    continue
+                sample_images.append(_tensor_to_pil(images[batch_index, view_index, time_index]))
+            prefix = " ".join("<image>" for _ in sample_images)
+            if prefix:
+                prompt_text.append(f"{prefix}\n{text[batch_index]}")
+            else:
+                prompt_text.append(text[batch_index])
+            prompt_images.append(sample_images)
+        return prompt_text, prompt_images
+
+
 def build_vlm_backbone(config: ModelConfig) -> BaseVLMBackbone:
     if config.backbone_impl == "dummy":
         return DummyVLMBackbone(config)
     if config.backbone_impl == "qwen2_5_vl":
         return Qwen25VLBackbone(config)
+    if config.backbone_impl == "smolvlm":
+        return SmolVLMBackbone(config)
     raise ValueError("Unsupported backbone_impl")
 
 
